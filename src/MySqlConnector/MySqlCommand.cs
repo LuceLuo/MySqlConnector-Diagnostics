@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using MySqlConnector.Core;
+using MySqlConnector.Diagnostics;
 using MySqlConnector.Protocol.Serialization;
 using MySqlConnector.Utilities;
 
@@ -83,6 +85,8 @@ namespace MySqlConnector
 			UpdatedRowSource = other.UpdatedRowSource;
 			m_parameterCollection = other.CloneRawParameters();
 		}
+
+		private static readonly DiagnosticListener _diagnosticListener = MySqlDiagnosticListenerExtensions.Instance;
 
 		/// <summary>
 		/// The collection of <see cref="MySqlParameter"/> objects for this command.
@@ -259,6 +263,7 @@ namespace MySqlConnector
 
 		internal async Task<int> ExecuteNonQueryAsync(IOBehavior ioBehavior, CancellationToken cancellationToken)
 		{
+			var oId = _diagnosticListener.WriteCommandExecuteBefore(this);
 			this.ResetCommandTimeout();
 			using var registration = ((ICancellableCommand) this).RegisterCancel(cancellationToken);
 			using var reader = await ExecuteReaderNoResetTimeoutAsync(CommandBehavior.Default, ioBehavior, cancellationToken).ConfigureAwait(false);
@@ -268,6 +273,7 @@ namespace MySqlConnector
 				{
 				}
 			} while (await reader.NextResultAsync(ioBehavior, cancellationToken).ConfigureAwait(false));
+			_diagnosticListener.WriteCommandExecuteAfter(oId, this);
 			return reader.RecordsAffected;
 		}
 
@@ -276,6 +282,7 @@ namespace MySqlConnector
 
 		internal async Task<object?> ExecuteScalarAsync(IOBehavior ioBehavior, CancellationToken cancellationToken)
 		{
+			var oId = _diagnosticListener.WriteCommandExecuteBefore(this);
 			this.ResetCommandTimeout();
 			using var registration = ((ICancellableCommand) this).RegisterCancel(cancellationToken);
 			var hasSetResult = false;
@@ -291,6 +298,7 @@ namespace MySqlConnector
 					hasSetResult = true;
 				}
 			} while (await reader.NextResultAsync(ioBehavior, cancellationToken).ConfigureAwait(false));
+			_diagnosticListener.WriteCommandExecuteAfter(oId, this);
 			return result;
 		}
 

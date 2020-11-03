@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 using MySqlConnector.Core;
+using MySqlConnector.Diagnostics;
 using MySqlConnector.Logging;
 using MySqlConnector.Protocol.Payloads;
 using MySqlConnector.Protocol.Serialization;
@@ -23,6 +25,8 @@ namespace MySqlConnector
 		, ICloneable
 #endif
 	{
+		private static readonly DiagnosticListener _diagnosticListener = MySqlDiagnosticListenerExtensions.Instance;
+
 		public MySqlConnection()
 			: this(default)
 		{
@@ -204,7 +208,7 @@ namespace MySqlConnector
 				else
 				{
 					m_enlistedTransaction = GetInitializedConnectionSettings().UseXaTransactions ?
-						(EnlistedTransactionBase)new XaEnlistedTransaction(transaction, this) :
+						(EnlistedTransactionBase) new XaEnlistedTransaction(transaction, this) :
 						new StandardEnlistedTransaction(transaction, this);
 					m_enlistedTransaction.Start();
 
@@ -351,7 +355,7 @@ namespace MySqlConnector
 			m_session.DatabaseOverride = databaseName;
 		}
 
-		public new MySqlCommand CreateCommand() => (MySqlCommand)base.CreateCommand();
+		public new MySqlCommand CreateCommand() => (MySqlCommand) base.CreateCommand();
 
 		public bool Ping() => PingAsync(IOBehavior.Synchronous, CancellationToken.None).GetAwaiter().GetResult();
 		public Task<bool> PingAsync(CancellationToken cancellationToken = default) => PingAsync(SimpleAsyncIOBehavior, cancellationToken).AsTask();
@@ -383,6 +387,7 @@ namespace MySqlConnector
 			if (State != ConnectionState.Closed)
 				throw new InvalidOperationException("Cannot Open when State is {0}.".FormatInvariant(State));
 
+			var oId = _diagnosticListener.WriteConnectionOpenBefore(this);
 			var openStartTickCount = Environment.TickCount;
 
 			SetState(ConnectionState.Connecting);
@@ -400,6 +405,8 @@ namespace MySqlConnector
 					TakeSessionFrom(existingConnection);
 					m_hasBeenOpened = true;
 					SetState(ConnectionState.Open);
+
+					_diagnosticListener.WriteConnectionOpenAfter(oId, this);
 					return;
 				}
 			}
@@ -411,15 +418,19 @@ namespace MySqlConnector
 
 				m_hasBeenOpened = true;
 				SetState(ConnectionState.Open);
+
+				_diagnosticListener.WriteConnectionOpenAfter(oId, this);
 			}
-			catch (MySqlException)
+			catch (MySqlException ex)
 			{
 				SetState(ConnectionState.Closed);
+				_diagnosticListener.WriteConnectionOpenError(oId, this, ex);
 				throw;
 			}
 			catch (SocketException ex)
 			{
 				SetState(ConnectionState.Closed);
+				_diagnosticListener.WriteConnectionOpenError(oId, this, ex);
 				throw new MySqlException(MySqlErrorCode.UnableToConnectToHost, "Unable to connect to any of the specified MySQL hosts.", ex);
 			}
 
